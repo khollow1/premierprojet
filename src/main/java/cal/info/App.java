@@ -28,11 +28,11 @@ public class App
                 os.close();
             }
         });
-    // Route "/hackathons"
+    serveur.createContext("/etudiants", new ControleurEtudiant());
     serveur.createContext("/hackathons", new ControleurHackathon());
 
-    // Démarrer le serveur
-    serveur.setExecutor(null); // Créer un exécuteur par défaut
+
+    serveur.setExecutor(null);
     serveur.start();
 
     System.out.println("Serveur démarré et en écoute sur le port 8000");
