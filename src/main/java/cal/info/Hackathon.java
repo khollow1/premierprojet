@@ -1,6 +1,7 @@
 package cal.info;
 
 public class Hackathon {
+    private int id;
     private String nom;
     private String lieu;
 
@@ -14,7 +15,12 @@ public class Hackathon {
         this.nom = nom;
         this.lieu = lieu;
     }
-
+    public int getId() {
+        return id;
+    }
+    public void setId(int id) {
+        this.id = id;
+    }
     public String getNom() {
         return nom;
     }

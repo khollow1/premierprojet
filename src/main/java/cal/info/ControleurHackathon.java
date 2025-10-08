@@ -1,108 +1,143 @@
 package cal.info;
 
+import com.google.gson.Gson;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.util.ArrayList;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public class ControleurHackathon implements HttpHandler {
-    private List<Hackathon> lesHackathons = new ArrayList<>();
 
-    public ControleurHackathon() {
-        lesHackathons.add(new Hackathon("HackQC", "Montréal"));
-        lesHackathons.add(new Hackathon("HackConcordia", "Montréal"));
-        lesHackathons.add(new Hackathon("HackUQam", "Montréal"));
-    }
+    private final GestionHackathon gestionHackathon = new GestionHackathon();
+    private final Gson gson = new Gson();
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
-        String typeRequete = exchange.getRequestMethod();
-        String chemin = exchange.getRequestURI().getPath();
+        String methode = exchange.getRequestMethod();
         String query = exchange.getRequestURI().getQuery();
 
-        System.out.println("Requête reçue : " + typeRequete + " " + chemin + (query != null ? "?" + query : ""));
-
-        switch (typeRequete) {
-            case "GET":
-                if (query != null && query.contains("nom=")) {
-                    rechercheHackathons(exchange, query);
-                } else {
-                    listeHackathons(exchange);
-                }
-                break;
-
-            case "POST":
-                ajouterHackathon(exchange);
-                break;
-
-            case "PUT":
-                modifierHackathon(exchange);
-                break;
-
-            case "DELETE":
-                supprimerHackathon(exchange);
-                break;
-
-            default:
-                sendResponse(exchange, "Méthode HTTP non supportée : " + typeRequete, 405);
-                break;
-        }
-    }
-
-    private void sendResponse(HttpExchange exchange, String response, int statusCode) throws IOException {
-        exchange.sendResponseHeaders(statusCode, response.getBytes().length);
-        OutputStream os = exchange.getResponseBody();
-        os.write(response.getBytes());
-        os.close();
-    }
-
-    private void listeHackathons(HttpExchange exchange) throws IOException {
-        String texte = "Liste des hackathons:\n";
-        for (int i = 0; i < lesHackathons.size(); i++) {
-            Hackathon h = lesHackathons.get(i);
-            texte += h.getNom() + " - " + h.getLieu() + "\n";
-        }
-        sendResponse(exchange, texte, 200);
-    }
-
-    private void rechercheHackathons(HttpExchange exchange, String query) throws IOException {
-        String nomRecherche = query.replace("nom=", "");
-        String texte = "Résultats pour " + nomRecherche + ":\n";
-        for (int i = 0; i < lesHackathons.size(); i++) {
-            Hackathon h = lesHackathons.get(i);
-            if (h.getNom().equalsIgnoreCase(nomRecherche)) {
-                texte += h.getNom() + " - " + h.getLieu() + "\n";
+        try {
+            switch (methode) {
+                case "GET":
+                    if (query != null && query.contains("nom=")) {
+                        String nom = extraireParametre(query, "nom");
+                        rechercheHackathons(exchange, nom);
+                    } else {
+                        listeHackathons(exchange);
+                    }
+                    break;
+                case "POST":
+                    ajouterHackathon(exchange);
+                    break;
+                case "PUT":
+                    modifierHackathon(exchange);
+                    break;
+                case "DELETE":
+                    supprimerHackathon(exchange, query);
+                    break;
+                default:
+                    exchange.sendResponseHeaders(405, -1);
             }
+        } catch (Exception e) {
+            envoyerReponseTexte(exchange, "Erreur serveur : " + e.getMessage(), 500);
         }
-        sendResponse(exchange, texte, 200);
     }
 
     private void ajouterHackathon(HttpExchange exchange) throws IOException {
-        Hackathon nouveau = new Hackathon("HackNew", "VilleX");
-        lesHackathons.add(nouveau);
-        String texte = "Hackathon ajouté: " + nouveau.getNom() + " - " + nouveau.getLieu();
-        sendResponse(exchange, texte, 201);
-    }
+        try (InputStream is = exchange.getRequestBody()) {
+            Hackathon nouveau = gson.fromJson(new InputStreamReader(is, StandardCharsets.UTF_8), Hackathon.class);
 
-    private void modifierHackathon(HttpExchange exchange) throws IOException {
-        if (lesHackathons.size() > 0) {
-            Hackathon h = lesHackathons.get(0);
-            h.setNom("HackModifie");
-            h.setLieu("VilleY");
-            sendResponse(exchange, "Hackathon modifié : " + h.getNom() + " - " + h.getLieu(), 200);
-        } else {
-            sendResponse(exchange, "Aucun hackathon à modifier", 404);
+            if (gestionHackathon.ajouterHackathon(nouveau)) {
+                envoyerReponseJSON(exchange, nouveau, 201);
+            } else {
+                envoyerReponseTexte(exchange, "Hackathon existe déjà", 409);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            envoyerReponseTexte(exchange, "Erreur dans le JSON", 400);
         }
     }
 
-    private void supprimerHackathon(HttpExchange exchange) throws IOException {
-        if (lesHackathons.size() > 0) {
-            Hackathon h = lesHackathons.remove(0);
-            sendResponse(exchange, "Hackathon supprimé : " + h.getNom(), 200);
+    private void listeHackathons(HttpExchange exchange) throws IOException {
+        try {
+            List<Hackathon> hackathons = gestionHackathon.retrouverHackathons();
+            envoyerReponseJSON(exchange, hackathons, 200);
+        } catch (Exception e) {
+            envoyerReponseTexte(exchange, "Erreur lors de la récupération", 500);
+        }
+    }
+
+    private void rechercheHackathons(HttpExchange exchange, String nom) throws IOException {
+        try {
+            List<Hackathon> resultats = gestionHackathon.rechercherParNom(nom);
+            envoyerReponseJSON(exchange, resultats, 200);
+        } catch (Exception e) {
+            envoyerReponseTexte(exchange, "Erreur lors de la recherche", 500);
+        }
+    }
+
+    private void modifierHackathon(HttpExchange exchange) throws IOException {
+        try (InputStream is = exchange.getRequestBody()) {
+            Hackathon modifie = gson.fromJson(new InputStreamReader(is, StandardCharsets.UTF_8), Hackathon.class);
+            if (gestionHackathon.modifierHackathon(modifie)) {
+                envoyerReponseJSON(exchange, modifie, 200);
+            } else {
+                envoyerReponseTexte(exchange, "Hackathon non trouvé", 404);
+            }
+        } catch (Exception e) {
+            envoyerReponseTexte(exchange, "Erreur dans le JSON", 400);
+        }
+    }
+
+    private void supprimerHackathon(HttpExchange exchange, String query) throws IOException {
+        if (query != null && query.contains("id=")) {
+            try {
+                int id = Integer.parseInt(extraireParametre(query, "id"));
+                if (gestionHackathon.supprimerHackathon(id)) {
+                    envoyerReponseTexte(exchange, "Hackathon supprimé", 200);
+                } else {
+                    envoyerReponseTexte(exchange, "Hackathon non trouvé", 404);
+                }
+            } catch (NumberFormatException e) {
+                envoyerReponseTexte(exchange, "ID invalide", 400);
+            } catch (Exception e) {
+                envoyerReponseTexte(exchange, "Erreur lors de la suppression", 500);
+            }
         } else {
-            sendResponse(exchange, "Aucun hackathon à supprimer", 404);
+            envoyerReponseTexte(exchange, "ID manquant", 400);
+        }
+    }
+
+    private String extraireParametre(String query, String cle) {
+        for (String param : query.split("&")) {
+            String[] parts = param.split("=");
+            if (parts.length == 2 && parts[0].equals(cle)) {
+                return parts[1];
+            }
+        }
+        return null;
+    }
+
+    private void envoyerReponseJSON(HttpExchange exchange, Object obj, int code) throws IOException {
+        String json = gson.toJson(obj);
+        byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+        exchange.sendResponseHeaders(code, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
+        }
+    }
+
+    private void envoyerReponseTexte(HttpExchange exchange, String texte, int code) throws IOException {
+        byte[] bytes = texte.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=UTF-8");
+        exchange.sendResponseHeaders(code, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
         }
     }
 }
