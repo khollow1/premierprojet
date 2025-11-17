@@ -1,80 +1,133 @@
 package cal.info;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
+
 import java.sql.SQLException;
-import java.sql.Statement; 
-import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class GestionHackathon {
+    private GestionHackathonDao dao;
 
+    Map<String, Set<Etudiant>> etudiantsParProg = new HashMap<>();
 
+    public GestionHackathon(GestionHackathonDao dao) {
+        this.dao = dao;
+    }
+        // ========== Méthodes Hackathon (logique métier) ==========
+    
     public boolean ajouterHackathon(Hackathon hackathon) throws SQLException {
-        String insertSQL = "INSERT INTO Hackathon1 (nom, lieu) VALUES (?, ?)";
-        try (Connection conn = BaseDeDonneesUtil.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(insertSQL)) {
-            pstmt.setString(1, hackathon.getNom());
-            pstmt.setString(2, hackathon.getLieu());
-            return pstmt.executeUpdate() > 0;
-        }
+        return dao.ajouterHackathon(hackathon);
     }
 
     public List<Hackathon> retrouverHackathons() throws SQLException {
-        List<Hackathon> hackathons = new ArrayList<>();
-        String selectSQL = "SELECT * FROM Hackathon1";
-
-        try (Connection conn = BaseDeDonneesUtil.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(selectSQL)) {
-
-            while (rs.next()) {
-                Hackathon h = new Hackathon();
-                h.setId(rs.getInt("id"));
-                h.setNom(rs.getString("nom"));
-                h.setLieu(rs.getString("lieu"));
-                hackathons.add(h);
-            }
-        }
-        return hackathons;
+        return dao.retrouverTousHackathons();
     }
 
     public List<Hackathon> rechercherParNom(String nom) throws SQLException {
-        List<Hackathon> resultats = new ArrayList<>();
-        String selectSQL = "SELECT * FROM Hackathon1 WHERE LOWER(nom) = LOWER(?)";
-        try (Connection conn = BaseDeDonneesUtil.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(selectSQL)) {
-            pstmt.setString(1, nom);
-            try (ResultSet rs = pstmt.executeQuery()) {
-                while (rs.next()) {
-                    Hackathon h = new Hackathon();
-                    h.setId(rs.getInt("id"));
-                    h.setNom(rs.getString("nom"));
-                    h.setLieu(rs.getString("lieu"));
-                    resultats.add(h);
-                }
-            }
-        }
-        return resultats;
+        return dao.rechercherParNom(nom);
     }
 
     public boolean modifierHackathon(Hackathon hackathon) throws SQLException {
-        String updateSQL = "UPDATE Hackathon1 SET nom=?, lieu=? WHERE id=?";
-        try (Connection conn = BaseDeDonneesUtil.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(updateSQL)) {
-            pstmt.setString(1, hackathon.getNom());
-            pstmt.setString(2, hackathon.getLieu());
-            pstmt.setInt(3, hackathon.getId());
-            return pstmt.executeUpdate() > 0;
-        }
+        return dao.modifierHackathon(hackathon);
     }
 
     public boolean supprimerHackathon(int id) throws SQLException {
-        String deleteSQL = "DELETE FROM Hackathon1 WHERE id = ?";
-        try (Connection conn = BaseDeDonneesUtil.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(deleteSQL)) {
-            pstmt.setInt(1, id);
-            return pstmt.executeUpdate() > 0;
+        return dao.supprimerHackathon(id);
+    }
+
+    // ========== Méthodes Etudiant (logique métier + map) ==========
+    
+    /**
+     * Ajoute une liste d'étudiants en mémoire (map par programme)
+     * Évite les doublons grâce au HashSet
+     */
+    public void ajouterEtudiant(List<Etudiant> etudiants) {
+        if (etudiants == null || etudiants.isEmpty()) return;
+
+        for (int i = 0; i < etudiants.size(); i++) {
+            Etudiant etudiant = etudiants.get(i);
+            if (etudiant == null) continue;
+
+            String rawProg = etudiant.getProgramme();
+            String normalized;
+            if (rawProg == null) {
+                normalized = "default";
+            } else {
+                normalized = rawProg.trim();
+                if (normalized.isEmpty()) {
+                    normalized = "default";
+                } else {
+                    normalized = normalized.toLowerCase();
+                }
+            }
+
+            etudiantsParProg.putIfAbsent(normalized, new HashSet<>());
+            Set<Etudiant> set = etudiantsParProg.get(normalized);
+            set.add(etudiant);
         }
+    }
+
+    /**
+     * Persiste les étudiants en mémoire vers la base de données
+     * @return nombre d'étudiants ajoutés
+     */
+    public int persisterEtudiants() throws SQLException {
+        int total = 0;
+
+        for (Set<Etudiant> setEtudiants : etudiantsParProg.values()) {
+            HashSet<Etudiant> etudiantsBatch = new HashSet<>(setEtudiants);
+            try {
+                if (dao.ajouterEtudiant(etudiantsBatch)) {
+                    total += etudiantsBatch.size();
+                }
+            } catch (SQLException e) {
+                if (e.getMessage().contains("Unique index or primary key violation")) {
+                    System.err.println("Certains étudiants existent déjà dans la base.");
+                } else {
+                    throw e;
+                }
+            }
+        }
+
+        return total;
+    }
+
+    /**
+     * Charge les étudiants depuis la base vers la map en mémoire
+     */
+    public void chargerEtudiantsDepuisBase() throws SQLException {
+        etudiantsParProg.clear();
+        List<Etudiant> tous = dao.retrouverTousEtudiants();
+        ajouterEtudiant(tous);
+    }
+
+    /**
+     * Obtient les étudiants d'un programme spécifique
+     */
+    public Set<Etudiant> getEtudiantsProgramme(String programme) {
+        if (programme == null) programme = "default";
+        String normalized = programme.trim().toLowerCase();
+        Set<Etudiant> set = etudiantsParProg.get(normalized);
+        return set == null ? new HashSet<>() : new HashSet<>(set); 
+    }
+
+    /**
+     * Retourne la map complète (pour affichage/debug)
+     */
+    public Map<String, Set<Etudiant>> getEtudiantsParProg() {
+        return etudiantsParProg;
+    }
+
+    /**
+     * Compte le nombre total d'étudiants en mémoire
+     */
+    public int compterEtudiants() {
+        int total = 0;
+        for (Set<Etudiant> set : etudiantsParProg.values()) {
+            total += set.size();
+        }
+        return total;
     }
 }
